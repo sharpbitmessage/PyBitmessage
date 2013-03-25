@@ -68,114 +68,117 @@ class outgoingSynSender(QThread):
         QThread.__init__(self, parent)
         self.selfInitiatedConnectionList = [] #This is a list of current connections (the thread pointers at least)
         self.alreadyAttemptedConnectionsList = [] #This is a list of nodes to which we have already attempted a connection
+        self.resetTime = int(time.time()) #used to clear out the alreadyAttemptedConnectionsList periodically so that we will retry connecting to hosts to which we have already tried to connect.
 
     def setup(self,streamNumber):
         self.streamNumber = streamNumber
 
-
     def run(self):
         time.sleep(1)
-        resetTime = int(time.time()) #used below to clear out the alreadyAttemptedConnectionsList periodically so that we will retry connecting to hosts to which we have already tried to connect.
         while True:
             #time.sleep(999999)#I sometimes use this to prevent connections for testing.
             if len(self.selfInitiatedConnectionList) < 8: #maximum number of outgoing connections = 8
-                random.seed()
-                HOST, = random.sample(knownNodes[self.streamNumber],  1)
-                while HOST in self.alreadyAttemptedConnectionsList or HOST in connectedHostsList:
-                    #print 'choosing new sample'
-                    random.seed()
-                    HOST, = random.sample(knownNodes[self.streamNumber],  1)
-                    time.sleep(1)
-                    #Clear out the alreadyAttemptedConnectionsList every half hour so that this program will again attempt a connection to any nodes, even ones it has already tried.
-                    if (int(time.time()) - resetTime) > 1800:
-                        self.alreadyAttemptedConnectionsList = []
-                        resetTime = int(time.time())
-                self.alreadyAttemptedConnectionsList.append(HOST)
-                PORT, timeNodeLastSeen = knownNodes[self.streamNumber][HOST]
-                sock = socks.socksocket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(20)
-                if config.get('bitmessagesettings', 'socksproxytype') == 'none':
-                    printLock.acquire()
-                    print 'Trying an outgoing connection to', HOST, ':', PORT
-                    printLock.release()
-                    #sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                elif config.get('bitmessagesettings', 'socksproxytype') == 'SOCKS4a':
-                    printLock.acquire()
-                    print '(Using SOCKS4a) Trying an outgoing connection to', HOST, ':', PORT
-                    printLock.release()
-                    proxytype = socks.PROXY_TYPE_SOCKS4
-                    sockshostname = config.get('bitmessagesettings', 'sockshostname')
-                    socksport = config.getint('bitmessagesettings', 'socksport')
-                    rdns = True #Do domain name lookups through the proxy; though this setting doesn't really matter since we won't be doing any domain name lookups anyway.
-                    if config.getboolean('bitmessagesettings', 'socksauthentication'):
-                        socksusername = config.get('bitmessagesettings', 'socksusername')
-                        sockspassword = config.get('bitmessagesettings', 'sockspassword')
-                        sock.setproxy(proxytype, sockshostname, socksport, rdns, socksusername, sockspassword)
-                    else:
-                        sock.setproxy(proxytype, sockshostname, socksport, rdns)
-                elif config.get('bitmessagesettings', 'socksproxytype') == 'SOCKS5':
-                    printLock.acquire()
-                    print '(Using SOCKS5) Trying an outgoing connection to', HOST, ':', PORT
-                    printLock.release()
-                    proxytype = socks.PROXY_TYPE_SOCKS5
-                    sockshostname = config.get('bitmessagesettings', 'sockshostname')
-                    socksport = config.getint('bitmessagesettings', 'socksport')
-                    rdns = True #Do domain name lookups through the proxy; though this setting doesn't really matter since we won't be doing any domain name lookups anyway.
-                    if config.getboolean('bitmessagesettings', 'socksauthentication'):
-                        socksusername = config.get('bitmessagesettings', 'socksusername')
-                        sockspassword = config.get('bitmessagesettings', 'sockspassword')
-                        sock.setproxy(proxytype, sockshostname, socksport, rdns, socksusername, sockspassword)
-                    else:
-                        sock.setproxy(proxytype, sockshostname, socksport, rdns)
-
-                try:
-                    sock.connect((HOST, PORT))
-                    rd = receiveDataThread()
-                    self.emit(SIGNAL("passObjectThrough(PyQt_PyObject)"),rd)
-                    objectsOfWhichThisRemoteNodeIsAlreadyAware = {}
-                    rd.setup(sock,HOST,PORT,self.streamNumber,self.selfInitiatedConnectionList,objectsOfWhichThisRemoteNodeIsAlreadyAware)
-                    rd.start()
-                    printLock.acquire()
-                    print self, 'connected to', HOST, 'during outgoing attempt.'
-                    printLock.release()
-
-                    sd = sendDataThread()
-                    sd.setup(sock,HOST,PORT,self.streamNumber,objectsOfWhichThisRemoteNodeIsAlreadyAware)
-                    sd.start()
-                    sd.sendVersionMessage()
-
-                except socks.GeneralProxyError, err:
-                    printLock.acquire()
-                    print 'Could NOT connect to', HOST, 'during outgoing attempt.', err
-                    printLock.release()
-                    PORT, timeLastSeen = knownNodes[self.streamNumber][HOST]
-                    if (int(time.time())-timeLastSeen) > 172800 and len(knownNodes[self.streamNumber]) > 1000: # for nodes older than 48 hours old if we have more than 1000 hosts in our list, delete from the knownNodes data-structure.
-                        del knownNodes[self.streamNumber][HOST]
-                        print 'deleting ', HOST, 'from knownNodes because it is more than 48 hours old and we could not connect to it.'
-                except socks.Socks5AuthError, err:
-                    self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"SOCKS5 Authentication problem: "+str(err))
-                except socks.Socks5Error, err:
-                    pass
-                    print 'SOCKS5 error. (It is possible that the server wants authentication).)' ,str(err)
-                    #self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"SOCKS5 error. Server might require authentication. "+str(err))
-                except socks.Socks4Error, err:
-                    print 'Socks4Error:', err
-                    #self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"SOCKS4 error: "+str(err))
-                except socket.error, err:
-                    if config.get('bitmessagesettings', 'socksproxytype')[0:5] == 'SOCKS':
-                        print 'Bitmessage MIGHT be having trouble connecting to the SOCKS server. '+str(err)
-                        #self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"Problem: Bitmessage can not connect to the SOCKS server. "+str(err))
-                    else:
-                        printLock.acquire()
-                        print 'Could NOT connect to', HOST, 'during outgoing attempt.', err
-                        printLock.release()
-                        PORT, timeLastSeen = knownNodes[self.streamNumber][HOST]
-                        if (int(time.time())-timeLastSeen) > 172800 and len(knownNodes[self.streamNumber]) > 1000: # for nodes older than 48 hours old if we have more than 1000 hosts in our list, delete from the knownNodes data-structure.
-                            del knownNodes[self.streamNumber][HOST]
-                            print 'deleting ', HOST, 'from knownNodes because it is more than 48 hours old and we could not connect to it.'
-                except Exception, err:
-                    print 'An exception has occurred in the outgoingSynSender thread that was not caught by other exception types:', err
+                self.makeOutgoingConn()
             time.sleep(0.1)
+
+    def makeOutgoingConn(self):
+        random.seed()
+        HOST, = random.sample(knownNodes[self.streamNumber],  1)
+        while HOST in self.alreadyAttemptedConnectionsList or HOST in connectedHostsList:
+            #print 'choosing new sample'
+            random.seed()
+            HOST, = random.sample(knownNodes[self.streamNumber],  1)
+            time.sleep(1)
+            #Clear out the alreadyAttemptedConnectionsList every half hour so that this program will again attempt a connection to any nodes, even ones it has already tried.
+            if (int(time.time()) - self.resetTime) > 1800:
+                self.alreadyAttemptedConnectionsList = []
+                self.resetTime = int(time.time())
+
+        self.alreadyAttemptedConnectionsList.append(HOST)
+        PORT, timeNodeLastSeen = knownNodes[self.streamNumber][HOST]
+        sock = socks.socksocket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(20)
+        if config.get('bitmessagesettings', 'socksproxytype') == 'none':
+            printLock.acquire()
+            print 'Trying an outgoing connection to', HOST, ':', PORT
+            printLock.release()
+            #sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        elif config.get('bitmessagesettings', 'socksproxytype') == 'SOCKS4a':
+            printLock.acquire()
+            print '(Using SOCKS4a) Trying an outgoing connection to', HOST, ':', PORT
+            printLock.release()
+            proxytype = socks.PROXY_TYPE_SOCKS4
+            sockshostname = config.get('bitmessagesettings', 'sockshostname')
+            socksport = config.getint('bitmessagesettings', 'socksport')
+            rdns = True #Do domain name lookups through the proxy; though this setting doesn't really matter since we won't be doing any domain name lookups anyway.
+            if config.getboolean('bitmessagesettings', 'socksauthentication'):
+                socksusername = config.get('bitmessagesettings', 'socksusername')
+                sockspassword = config.get('bitmessagesettings', 'sockspassword')
+                sock.setproxy(proxytype, sockshostname, socksport, rdns, socksusername, sockspassword)
+            else:
+                sock.setproxy(proxytype, sockshostname, socksport, rdns)
+        elif config.get('bitmessagesettings', 'socksproxytype') == 'SOCKS5':
+            printLock.acquire()
+            print '(Using SOCKS5) Trying an outgoing connection to', HOST, ':', PORT
+            printLock.release()
+            proxytype = socks.PROXY_TYPE_SOCKS5
+            sockshostname = config.get('bitmessagesettings', 'sockshostname')
+            socksport = config.getint('bitmessagesettings', 'socksport')
+            rdns = True #Do domain name lookups through the proxy; though this setting doesn't really matter since we won't be doing any domain name lookups anyway.
+            if config.getboolean('bitmessagesettings', 'socksauthentication'):
+                socksusername = config.get('bitmessagesettings', 'socksusername')
+                sockspassword = config.get('bitmessagesettings', 'sockspassword')
+                sock.setproxy(proxytype, sockshostname, socksport, rdns, socksusername, sockspassword)
+            else:
+                sock.setproxy(proxytype, sockshostname, socksport, rdns)
+
+        try:
+            sock.connect((HOST, PORT))
+            rd = receiveDataThread()
+            self.emit(SIGNAL("passObjectThrough(PyQt_PyObject)"),rd)
+            objectsOfWhichThisRemoteNodeIsAlreadyAware = {}
+            rd.setup(sock,HOST,PORT,self.streamNumber,self.selfInitiatedConnectionList,objectsOfWhichThisRemoteNodeIsAlreadyAware)
+            rd.start()
+            printLock.acquire()
+            print self, 'connected to', HOST, 'during outgoing attempt.'
+            printLock.release()
+
+            sd = sendDataThread()
+            sd.setup(sock,HOST,PORT,self.streamNumber,objectsOfWhichThisRemoteNodeIsAlreadyAware)
+            sd.start()
+            sd.sendVersionMessage()
+
+        except socks.GeneralProxyError, err:
+            printLock.acquire()
+            print 'Could NOT connect to', HOST, 'during outgoing attempt.', err
+            printLock.release()
+            PORT, timeLastSeen = knownNodes[self.streamNumber][HOST]
+            if (int(time.time())-timeLastSeen) > 172800 and len(knownNodes[self.streamNumber]) > 1000: # for nodes older than 48 hours old if we have more than 1000 hosts in our list, delete from the knownNodes data-structure.
+                del knownNodes[self.streamNumber][HOST]
+                print 'deleting ', HOST, 'from knownNodes because it is more than 48 hours old and we could not connect to it.'
+        except socks.Socks5AuthError, err:
+            self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"SOCKS5 Authentication problem: "+str(err))
+        except socks.Socks5Error, err:
+            pass
+            print 'SOCKS5 error. (It is possible that the server wants authentication).)' ,str(err)
+            #self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"SOCKS5 error. Server might require authentication. "+str(err))
+        except socks.Socks4Error, err:
+            print 'Socks4Error:', err
+            #self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"SOCKS4 error: "+str(err))
+        except socket.error, err:
+            if config.get('bitmessagesettings', 'socksproxytype')[0:5] == 'SOCKS':
+                print 'Bitmessage MIGHT be having trouble connecting to the SOCKS server. '+str(err)
+                #self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),"Problem: Bitmessage can not connect to the SOCKS server. "+str(err))
+            else:
+                printLock.acquire()
+                print 'Could NOT connect to', HOST, 'during outgoing attempt.', err
+                printLock.release()
+                PORT, timeLastSeen = knownNodes[self.streamNumber][HOST]
+                if (int(time.time())-timeLastSeen) > 172800 and len(knownNodes[self.streamNumber]) > 1000: # for nodes older than 48 hours old if we have more than 1000 hosts in our list, delete from the knownNodes data-structure.
+                    del knownNodes[self.streamNumber][HOST]
+                    print 'deleting ', HOST, 'from knownNodes because it is more than 48 hours old and we could not connect to it.'
+        except Exception, err:
+            print 'An exception has occurred in the outgoingSynSender thread that was not caught by other exception types:', err
 
 #Only one singleListener thread will ever exist. It creates the receiveDataThread and sendDataThread for each incoming connection. Note that it cannot set the stream number because it is not known yet- the other node will have to tell us its stream number in a version message. If we don't care about their stream, we will close the connection (within the recversion function of the recieveData thread)
 class singleListener(QThread):
