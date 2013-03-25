@@ -205,10 +205,6 @@ class singleListener(QThread):
                 time.sleep(10)
             a,(HOST,PORT) = sock.accept()
             #Users are finding that if they run more than one node in the same network (thus with the same public IP), they can not connect with the second node. This is because this section of code won't accept the connection from the same IP. This problem will go away when the Bitmessage network grows beyond being tiny but in the mean time I'll comment out this code section.
-            """while HOST in connectedHostsList:
-                print 'incoming connection is from a host in connectedHostsList (we are already connected to it). Ignoring it.'
-                a.close()
-                a,(HOST,PORT) = sock.accept()"""
             rd = receiveDataThread()
             self.emit(SIGNAL("passObjectThrough(PyQt_PyObject)"),rd)
             objectsOfWhichThisRemoteNodeIsAlreadyAware = {}
@@ -663,87 +659,6 @@ class receiveDataThread(QThread):
             print 'Time spent processing this interesting broadcast:', time.time()- self.messageProcessingStartTime
             printLock.release()
 
-        """elif sendersAddressVersion == 1:
-            sendersStream, sendersStreamLength = decodeVarint(self.data[readPosition:readPosition+9])
-            if sendersStream <= 0:
-                return
-            readPosition += sendersStreamLength
-            sendersHash = self.data[readPosition:readPosition+20]
-            if sendersHash not in broadcastSendersForWhichImWatching:
-                return
-            #At this point, this message claims to be from sendersHash and we are interested in it. We still have to hash the public key to make sure it is truly the key that matches the hash, and also check the signiture.
-            readPosition += 20
-            nLength, nLengthLength = decodeVarint(self.data[readPosition:readPosition+9])
-            if nLength < 1:
-                return
-            readPosition += nLengthLength
-            nString = self.data[readPosition:readPosition+nLength]
-            readPosition += nLength
-            eLength, eLengthLength = decodeVarint(self.data[readPosition:readPosition+9])
-            if eLength < 1:
-                return
-            readPosition += eLengthLength
-            eString = self.data[readPosition:readPosition+eLength]
-            #We are now ready to hash the public key and verify that its hash matches the hash claimed in the message
-            readPosition += eLength
-            sha = hashlib.new('sha512')
-            sha.update(nString+eString)
-            ripe = hashlib.new('ripemd160')
-            ripe.update(sha.digest())
-            if ripe.digest() != sendersHash:
-                #The sender of this message lied.
-                return
-
-            readPositionAtBeginningOfMessageEncodingType = readPosition
-            messageEncodingType, messageEncodingTypeLength = decodeVarint(self.data[readPosition:readPosition+9])
-            if messageEncodingType == 0:
-                return
-            readPosition += messageEncodingTypeLength
-            messageLength, messageLengthLength = decodeVarint(self.data[readPosition:readPosition+9])
-            readPosition += messageLengthLength
-            message = self.data[readPosition:readPosition+messageLength]
-            readPosition += messageLength
-            signature = self.data[readPosition:readPosition+nLength]
-            sendersPubkey = rsa.PublicKey(convertStringToInt(nString),convertStringToInt(eString))
-            #print 'senders Pubkey', sendersPubkey
-            try:
-                rsa.verify(self.data[readPositionAtBeginningOfMessageEncodingType:readPositionAtBeginningOfMessageEncodingType+messageEncodingTypeLength+messageLengthLength+messageLength],signature,sendersPubkey)
-                print 'verify passed'
-            except Exception, err:
-                print 'verify failed', err
-                return
-            #verify passed
-            fromAddress = encodeAddress(sendersAddressVersion,sendersStream,ripe.digest())
-            print 'fromAddress:', fromAddress
-
-            if messageEncodingType == 2:
-                bodyPositionIndex = string.find(message,'\nBody:')
-                if bodyPositionIndex > 1:
-                    subject = message[8:bodyPositionIndex]
-                    body = message[bodyPositionIndex+6:]
-                else:
-                    subject = ''
-                    body = message
-            elif messageEncodingType == 1:
-                body = message
-                subject = ''
-            elif messageEncodingType == 0:
-                print 'messageEncodingType == 0. Doing nothing with the message.'
-            else:
-                body = 'Unknown encoding type.\n\n' + repr(message)
-                subject = ''
-
-            toAddress = '[Broadcast subscribers]'
-            if messageEncodingType <> 0:
-                sqlLock.acquire()
-                t = (self.inventoryHash,toAddress,fromAddress,subject,int(time.time()),body,'inbox')
-                sqlSubmitQueue.put('''INSERT INTO inbox VALUES (?,?,?,?,?,?,?)''')
-                sqlSubmitQueue.put(t)
-                sqlReturnQueue.get()
-                sqlLock.release()
-                self.emit(SIGNAL("displayNewInboxMessage(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"),self.inventoryHash,toAddress,fromAddress,subject,body)"""
-
-
     #We have received a msg message.
     def recmsg(self):
         self.messageProcessingStartTime = time.time()
@@ -808,201 +723,6 @@ class receiveDataThread(QThread):
 
 
         #This section is for my RSA keys (version 1 addresses). If we don't have any version 1 addresses it will never run. This code will soon be removed.
-        """initialDecryptionSuccessful = False
-        infile = cStringIO.StringIO(self.data[readPosition:self.payloadLength+24])
-        outfile = cStringIO.StringIO()
-        #print 'len(myRSAAddressHashes.items()):', len(myRSAAddressHashes.items())
-        for key, value in myRSAAddressHashes.items():
-            try:
-                decrypt_bigfile(infile, outfile, value)
-                #The initial decryption passed though there is a small chance that the message isn't actually for me. We'll need to check that the 20 zeros are present.
-                #print 'initial decryption successful using key', repr(key)
-                initialDecryptionSuccessful = True
-                printLock.acquire()
-                print 'Initial decryption passed'
-                printLock.release()
-                break
-            except Exception, err:
-                infile.seek(0)
-                #print 'Exception:', err
-                #print 'outfile len is:', len(outfile.getvalue()),'data is:', repr(outfile.getvalue())
-                #print 'Initial decryption failed using key', value
-                #decryption failed for this key. The message is for someone else (or for a different key of mine).
-        if initialDecryptionSuccessful and outfile.getvalue()[:20] == '\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00': #this run of 0s allows the true message receiver to identify his message
-            #This is clearly a message bound for me.
-            outfile.seek(0)
-            data = outfile.getvalue()
-            readPosition = 20 #To start reading past the 20 zero bytes
-            messageVersion, messageVersionLength = decodeVarint(data[readPosition:readPosition+10])
-            readPosition += messageVersionLength
-            if messageVersion == 1:
-                bitfieldBehavior = data[readPosition:readPosition+4]
-                readPosition += 4
-                sendersAddressVersionNumber, sendersAddressVersionNumberLength = decodeVarint(data[readPosition:readPosition+10])
-                if sendersAddressVersionNumber == 1:
-                    readPosition += sendersAddressVersionNumberLength
-                    sendersStreamNumber, sendersStreamNumberLength = decodeVarint(data[readPosition:readPosition+10])
-                    if sendersStreamNumber == 0:
-                        print 'sendersStreamNumber = 0. Ignoring message'
-                    else:
-                        readPosition += sendersStreamNumberLength
-
-                        sendersNLength, sendersNLengthLength = decodeVarint(data[readPosition:readPosition+10])
-                        readPosition += sendersNLengthLength
-                        sendersN = data[readPosition:readPosition+sendersNLength]
-                        readPosition += sendersNLength
-                        sendersELength, sendersELengthLength = decodeVarint(data[readPosition:readPosition+10])
-                        readPosition += sendersELengthLength
-                        sendersE = data[readPosition:readPosition+sendersELength]
-                        readPosition += sendersELength
-                        endOfThePublicKeyPosition = readPosition
-
-                        messageEncodingType, messageEncodingTypeLength = decodeVarint(data[readPosition:readPosition+10])
-                        readPosition += messageEncodingTypeLength
-                        print 'Message Encoding Type:', messageEncodingType
-                        messageLength, messageLengthLength = decodeVarint(data[readPosition:readPosition+10])
-                        print 'message length:', messageLength
-                        readPosition += messageLengthLength
-                        message = data[readPosition:readPosition+messageLength]
-                        #print 'First 150 characters of message:', repr(message[:150])
-                        readPosition += messageLength
-                        ackLength, ackLengthLength = decodeVarint(data[readPosition:readPosition+10])
-                        #print 'ackLength:', ackLength
-                        readPosition += ackLengthLength
-                        ackData = data[readPosition:readPosition+ackLength]
-                        readPosition += ackLength
-                        payloadSigniture = data[readPosition:readPosition+sendersNLength] #We're using the length of the sender's n because it should match the signiture size.
-                        sendersPubkey = rsa.PublicKey(convertStringToInt(sendersN),convertStringToInt(sendersE))
-                        print 'sender\'s Pubkey', sendersPubkey
-
-                        #Check the cryptographic signiture
-                        verifyPassed = False
-                        try:
-                            rsa.verify(data[:-len(payloadSigniture)],payloadSigniture, sendersPubkey)
-                            print 'verify passed'
-                            verifyPassed = True
-                        except Exception, err:
-                            print 'verify failed', err
-                        if verifyPassed:
-                            #calculate the fromRipe.
-                            sha = hashlib.new('sha512')
-                            sha.update(sendersN+sendersE)
-                            ripe = hashlib.new('ripemd160')
-                            ripe.update(sha.digest())
-
-                            #Let's store the public key in case we want to reply to this person.
-                            #We don't have the correct nonce in order to send out a pubkey message so we'll just fill it with 1's. We won't be able to send this pubkey to others (without doing the proof of work ourselves, which this program is programmed to not do.)
-                            t = (ripe.digest(),False,'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'+data[20+messageVersionLength:endOfThePublicKeyPosition],int(time.time()),'yes')
-                            sqlLock.acquire()
-                            sqlSubmitQueue.put('''INSERT INTO pubkeys VALUES (?,?,?,?,?)''')
-                            sqlSubmitQueue.put(t)
-                            sqlReturnQueue.get()
-                            sqlLock.release()
-
-                            blockMessage = False #Gets set to True if the user shouldn't see the message according to black or white lists.
-                            fromAddress = encodeAddress(sendersAddressVersionNumber,sendersStreamNumber,ripe.digest())
-                            if config.get('bitmessagesettings', 'blackwhitelist') == 'black': #If we are using a blacklist
-                                t = (fromAddress,)
-                                sqlLock.acquire()
-                                sqlSubmitQueue.put('''SELECT label, enabled FROM blacklist where address=?''')
-                                sqlSubmitQueue.put(t)
-                                queryreturn = sqlReturnQueue.get()
-                                sqlLock.release()
-                                for row in queryreturn:
-                                    label, enabled = row
-                                    if enabled:
-                                        print 'Message ignored because address is in blacklist.'
-                                        blockMessage = True
-                            else: #We're using a whitelist
-                                t = (fromAddress,)
-                                sqlLock.acquire()
-                                sqlSubmitQueue.put('''SELECT label, enabled FROM whitelist where address=?''')
-                                sqlSubmitQueue.put(t)
-                                queryreturn = sqlReturnQueue.get()
-                                sqlLock.release()
-                                if queryreturn == []:
-                                    print 'Message ignored because address not in whitelist.'
-                                    blockMessage = True
-                                for row in queryreturn: #It could be in the whitelist but disabled. Let's check.
-                                    label, enabled = row
-                                    if not enabled:
-                                        print 'Message ignored because address in whitelist but not enabled.'
-                                        blockMessage = True
-
-                            if not blockMessage:
-                                print 'fromAddress:', fromAddress
-                                print 'First 150 characters of message:', repr(message[:150])
-
-                                #Look up the destination address (my address) based on the destination ripe hash.
-                                #I realize that I could have a data structure devoted to this task, or maintain an indexed table
-                                #in the sql database, but I would prefer to minimize the number of data structures this program
-                                #uses. Searching linearly through the user's short list of addresses doesn't take very long anyway.
-                                configSections = config.sections()
-                                for addressInKeysFile in configSections:
-                                    if addressInKeysFile <> 'bitmessagesettings':
-                                        status,addressVersionNumber,streamNumber,hash = decodeAddress(addressInKeysFile)
-                                        if hash == key:
-                                            toAddress = addressInKeysFile
-                                            toLabel = config.get(addressInKeysFile, 'label')
-                                            if toLabel == '':
-                                                toLabel = addressInKeysFile
-                                            break
-
-                                if messageEncodingType == 2:
-                                    bodyPositionIndex = string.find(message,'\nBody:')
-                                    if bodyPositionIndex > 1:
-                                        subject = message[8:bodyPositionIndex]
-                                        body = message[bodyPositionIndex+6:]
-                                    else:
-                                        subject = ''
-                                        body = message
-                                elif messageEncodingType == 1:
-                                    body = message
-                                    subject = ''
-                                elif messageEncodingType == 0:
-                                    print 'messageEncodingType == 0. Doing nothing with the message. They probably just sent it so that we would store their public key or send their ack data for them.'
-                                else:
-                                    body = 'Unknown encoding type.\n\n' + repr(message)
-                                    subject = ''
-                                print 'within recmsg, self.inventoryHash is', repr(self.inventoryHash)
-                                if messageEncodingType <> 0:
-                                    sqlLock.acquire()
-                                    t = (self.inventoryHash,toAddress,fromAddress,subject,int(time.time()),body,'inbox')
-                                    sqlSubmitQueue.put('''INSERT INTO inbox VALUES (?,?,?,?,?,?,?)''')
-                                    sqlSubmitQueue.put(t)
-                                    sqlReturnQueue.get()
-                                    sqlLock.release()
-                                    self.emit(SIGNAL("displayNewInboxMessage(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"),self.inventoryHash,toAddress,fromAddress,subject,body)
-                            #Now let us worry about the acknowledgement data
-                            #We'll need to make sure that our client will properly process the ackData; if the packet is malformed, it might cause us to clear out self.data and an attacker could use that behavior to determine that we decoded this message.
-                            ackDataValidThusFar = True
-                            if len(ackData) < 24:
-                                print 'The length of ackData is unreasonably short. Not sending ackData.'
-                                ackDataValidThusFar = False
-                            if ackData[0:4] != '\xe9\xbe\xb4\xd9':
-                                print 'Ackdata magic bytes were wrong. Not sending ackData.'
-                                ackDataValidThusFar = False
-                            if ackDataValidThusFar:
-                                ackDataPayloadLength, = unpack('>L',ackData[16:20])
-                                if len(ackData)-24 != ackDataPayloadLength: #This ackData includes the protocol header which is not counted in the payload length.
-                                    print 'ackData payload length doesn\'t match the payload length specified in the header. Not sending ackdata.'
-                                    ackDataValidThusFar = False
-                            if ackDataValidThusFar:
-                                print 'ackData is valid. Will process it.'
-                                self.ackDataThatWeHaveYetToSend.append(ackData) #When we have processed all data, the processData function will pop the ackData out and process it as if it is a message received from our peer.
-                else:
-                    print 'This program cannot decode messages from addresses with versions higher than 1. Ignoring.'
-                    statusbar = 'This program cannot decode messages from addresses with versions higher than 1. Ignoring it.'
-                    self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),statusbar)
-            else:
-                statusbar = 'Error: Cannot decode incoming msg versions higher than 1. Assuming the sender isn\' being silly, you should upgrade Bitmessage. Ignoring message.'
-                self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),statusbar)
-        else:
-            printLock.acquire()
-            print 'Could not decrypt with any RSA keys if you have any.'
-            printLock.release()
-        infile.close()
-        outfile.close()"""
 
     #A msg message has a valid time and POW and requires processing. The recmsg function calls this one.
     def processmsg(self,readPosition):
@@ -1397,59 +1117,6 @@ class receiveDataThread(QThread):
                 printLock.release()
                 workerQueue.put(('newpubkey',(addressVersion,streamNumber,ripe)))
 
-        #This code which deals with old RSA addresses will soon be removed.
-        """elif addressVersion == 1:
-            nLength, varintLength = decodeVarint(self.data[readPosition:readPosition+10])
-            readPosition += varintLength
-            nString = self.data[readPosition:readPosition+nLength]
-            readPosition += nLength
-            eLength, varintLength = decodeVarint(self.data[readPosition:readPosition+10])
-            readPosition += varintLength
-            eString = self.data[readPosition:readPosition+eLength]
-            readPosition += eLength
-
-            sha = hashlib.new('sha512')
-            sha.update(nString+eString)
-            ripeHasher = hashlib.new('ripemd160')
-            ripeHasher.update(sha.digest())
-            ripe = ripeHasher.digest()
-
-            print 'within recpubkey, addressVersion', addressVersion
-            print 'streamNumber', streamNumber
-            print 'ripe', repr(ripe)
-            print 'n=', convertStringToInt(nString)
-            print 'e=', convertStringToInt(eString)
-
-            t = (ripe,)
-            sqlLock.acquire()
-            sqlSubmitQueue.put('''SELECT usedpersonally FROM pubkeys WHERE hash=? AND usedpersonally='yes' ''')
-            sqlSubmitQueue.put(t)
-            queryreturn = sqlReturnQueue.get()
-            sqlLock.release()
-            if queryreturn != []: #if this pubkey is already in our database and if we have used it personally:
-                print 'We HAVE used this pubkey personally. Updating time.'
-                t = (ripe,True,self.data[24:24+self.payloadLength],int(time.time()),'yes')
-                sqlLock.acquire()
-                sqlSubmitQueue.put('''INSERT INTO pubkeys VALUES (?,?,?,?,?)''')
-                sqlSubmitQueue.put(t)
-                sqlReturnQueue.get()
-                sqlLock.release()
-                printLock.acquire()
-                print 'added foreign pubkey into our database'
-                printLock.release()
-                workerQueue.put(('newpubkey',(addressVersion,streamNumber,ripe)))
-            else:
-                print 'We have NOT used this pubkey personally. Inserting in database.'
-                t = (ripe,True,self.data[24:24+self.payloadLength],int(time.time()),'no')
-                sqlLock.acquire()
-                sqlSubmitQueue.put('''INSERT INTO pubkeys VALUES (?,?,?,?,?)''')
-                sqlSubmitQueue.put(t)
-                sqlReturnQueue.get()
-                sqlLock.release()
-                printLock.acquire()
-                print 'added foreign pubkey into our database'
-                printLock.release()
-                workerQueue.put(('newpubkey',(addressVersion,streamNumber,ripe)))"""
 
     #We have received a getpubkey message
     def recgetpubkey(self):
@@ -1522,41 +1189,6 @@ class receiveDataThread(QThread):
                 myAddress = encodeAddress(addressVersionNumber,streamNumber,self.data[36+addressVersionLength+streamNumberLength:56+addressVersionLength+streamNumberLength])
                 workerQueue.put(('doPOWForMyV2Pubkey',myAddress))
 
-            #This code which deals with old RSA addresses will soon be removed.
-                """elif self.data[36+addressVersionLength+streamNumberLength:56+addressVersionLength+streamNumberLength] in myRSAAddressHashes:
-                print 'Found getpubkey requested hash in my list of RSA hashes.'
-                payload = '\x00\x00\x00\x01' #bitfield of features supported by me (see the wiki).
-                payload += self.data[36:36+addressVersionLength+streamNumberLength]
-                #print int(config.get(encodeAddress(addressVersionNumber,streamNumber,self.data[36+addressVersionLength+streamNumberLength:56+addressVersionLength+streamNumberLength]), 'n'))
-                nString = convertIntToString(int(config.get(encodeAddress(addressVersionNumber,streamNumber,self.data[36+addressVersionLength+streamNumberLength:56+addressVersionLength+streamNumberLength]), 'n')))
-                eString = convertIntToString(config.getint(encodeAddress(addressVersionNumber,streamNumber,self.data[36+addressVersionLength+streamNumberLength:56+addressVersionLength+streamNumberLength]), 'e'))
-                payload += encodeVarint(len(nString))
-                payload += nString
-                payload += encodeVarint(len(eString))
-                payload += eString
-
-                nonce = 0
-                trialValue = 99999999999999999999
-                target = 2**64 / ((len(payload)+payloadLengthExtraBytes+8) * averageProofOfWorkNonceTrialsPerByte)
-                print '(For pubkey message) Doing proof of work...'
-                initialHash = hashlib.sha512(payload).digest()
-                while trialValue > target:
-                    nonce += 1
-                    trialValue, = unpack('>Q',hashlib.sha512(hashlib.sha512(pack('>Q',nonce) + initialHash).digest()).digest()[0:8])
-                print '(For pubkey message) Found proof of work', trialValue, 'Nonce:', nonce
-
-                payload = pack('>Q',nonce) + payload
-                t = (self.data[36+addressVersionLength+streamNumberLength:56+addressVersionLength+streamNumberLength],True,payload,int(time.time())+1209600) #after two weeks (1,209,600 seconds), we may remove our own pub key from our database. It will be regenerated and put back in the database if it is requested.
-                sqlLock.acquire()
-                #** pubkeys insert query not yet fixed! **
-                sqlSubmitQueue.put('''INSERT INTO pubkeys VALUES (?,?,?,?)''')
-                sqlSubmitQueue.put(t)
-                queryreturn = sqlReturnQueue.get()
-                sqlLock.release()
-                inventoryHash = calculateInventoryHash(payload)
-                objectType = 'pubkey'
-                inventory[inventoryHash] = (objectType, self.streamNumber, payload, int(time.time()))
-                self.broadcastinv(inventoryHash) """
             else:
                 printLock.acquire()
                 print 'This getpubkey request is not for any of my keys.'
@@ -2633,67 +2265,6 @@ class singleWorker(QThread):
                 queryreturn = sqlReturnQueue.get()
                 sqlLock.release()
 
-                """elif addressVersionNumber == 1: #This whole section can be taken out soon because we aren't supporting v1 addresses for much longer.
-                messageToTransmit = '\x02' #message encoding type
-                messageToTransmit += encodeVarint(len('Subject:' + subject + '\n' + 'Body:' + body))  #Type 2 is simple UTF-8 message encoding.
-                messageToTransmit += 'Subject:' + subject + '\n' + 'Body:' + body
-
-                #We need the all the integers for our private key in order to sign our message, and we need our public key to send with the message.
-                n = config.getint(fromaddress, 'n')
-                e = config.getint(fromaddress, 'e')
-                d = config.getint(fromaddress, 'd')
-                p = config.getint(fromaddress, 'p')
-                q = config.getint(fromaddress, 'q')
-                nString = convertIntToString(n)
-                eString = convertIntToString(e)
-                #myPubkey = rsa.PublicKey(n,e)
-                myPrivatekey = rsa.PrivateKey(n,e,d,p,q)
-
-                #The payload of the broadcast message starts with a POW, but that will be added later.
-                payload = pack('>I',(int(time.time())))
-                payload += encodeVarint(1) #broadcast version
-                payload += encodeVarint(addressVersionNumber)
-                payload += encodeVarint(streamNumber)
-                payload += ripe
-                payload += encodeVarint(len(nString))
-                payload += nString
-                payload += encodeVarint(len(eString))
-                payload += eString
-                payload += messageToTransmit
-                signature = rsa.sign(messageToTransmit,myPrivatekey,'SHA-512')
-                #print 'signature', signature.encode('hex')
-                payload += signature
-
-                #print 'nString', repr(nString)
-                #print 'eString', repr(eString)
-
-                nonce = 0
-                trialValue = 99999999999999999999
-                target = 2**64 / ((len(payload)+payloadLengthExtraBytes+8) * averageProofOfWorkNonceTrialsPerByte)
-                print '(For broadcast message) Doing proof of work...'
-                initialHash = hashlib.sha512(payload).digest()
-                while trialValue > target:
-                    nonce += 1
-                    trialValue, = unpack('>Q',hashlib.sha512(hashlib.sha512(pack('>Q',nonce) + initialHash).digest()).digest()[0:8])
-                print '(For broadcast message) Found proof of work', trialValue, 'Nonce:', nonce
-
-                payload = pack('>Q',nonce) + payload
-
-                inventoryHash = calculateInventoryHash(payload)
-                objectType = 'broadcast'
-                inventory[inventoryHash] = (objectType, streamNumber, payload, int(time.time()))
-                print 'sending inv (within sendBroadcast function)'
-                broadcastToSendDataQueues((streamNumber, 'sendinv', inventoryHash))
-
-                self.emit(SIGNAL("updateSentItemStatusByAckdata(PyQt_PyObject,PyQt_PyObject)"),ackdata,'Broadcast sent at '+strftime(config.get('bitmessagesettings', 'timeformat'),localtime(int(time.time()))))
-
-                #Update the status of the message in the 'sent' table to have a 'broadcastsent' status
-                sqlLock.acquire()
-                t = ('broadcastsent',int(time.time()),fromaddress, subject, body,'broadcastpending')
-                sqlSubmitQueue.put('UPDATE sent SET status=?, lastactiontime=? WHERE fromaddress=? AND subject=? AND message=? AND status=?')
-                sqlSubmitQueue.put(t)
-                queryreturn = sqlReturnQueue.get()
-                sqlLock.release()"""
             else:
                 printLock.acquire()
                 print 'In the singleWorker thread, the sendBroadcast function doesn\'t understand the address version'
@@ -2757,40 +2328,6 @@ class singleWorker(QThread):
                 payload += encodeVarint(len(signature))
                 payload += signature
 
-            """elif fromAddressVersionNumber == 1: #This code is for old version 1 (RSA) addresses. It will soon be removed.
-                payload = '\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' #this run of nulls allows the true message receiver to identify his message
-                payload += '\x01' #Message version.
-                payload += '\x00\x00\x00\x01'
-
-                payload += encodeVarint(fromAddressVersionNumber)
-                payload += encodeVarint(fromStreamNumber)
-
-                try:
-                    sendersN = convertIntToString(config.getint(fromaddress, 'n'))
-                except:
-                    printLock.acquire()
-                    print 'Error: Could not find', fromaddress, 'in our keys.dat file. You must have deleted it. Aborting the send.'
-                    printLock.release()
-                    return
-                payload += encodeVarint(len(sendersN))
-                payload += sendersN
-
-                sendersE = convertIntToString(config.getint(fromaddress, 'e'))
-                payload += encodeVarint(len(sendersE))
-                payload += sendersE
-
-                payload += '\x02' #Type 2 is simple UTF-8 message encoding.
-                messageToTransmit = 'Subject:' + subject + '\n' + 'Body:' + message
-                payload += encodeVarint(len(messageToTransmit))
-                payload += messageToTransmit
-
-                #Later, if anyone impliments clients that don't send the ack_data, then we should probably check here to make sure that the receiver will make use of this ack_data and not attach it if not.
-                fullAckPayload = self.generateFullAckMessage(ackdata,toStreamNumber,embeddedTime)
-                payload += encodeVarint(len(fullAckPayload))
-                payload += fullAckPayload
-                sendersPrivKey = rsa.PrivateKey(config.getint(fromaddress, 'n'),config.getint(fromaddress, 'e'),config.getint(fromaddress, 'd'),config.getint(fromaddress, 'p'),config.getint(fromaddress, 'q'))
-
-                payload += rsa.sign(payload,sendersPrivKey,'SHA-512')"""
 
             #We have assembled the data that will be encrypted. Now let us fetch the recipient's public key out of our database and do the encryption.
 
@@ -2818,40 +2355,6 @@ class singleWorker(QThread):
                 readPosition += 64
                 encrypted = highlevelcrypto.encrypt(payload,"04"+pubEncryptionKeyBase256.encode('hex'))
 
-            """elif toAddressVersionNumber == 1:
-                sqlLock.acquire()
-                sqlSubmitQueue.put('SELECT transmitdata FROM pubkeys WHERE hash=?')
-                sqlSubmitQueue.put((toRipe,))
-                queryreturn = sqlReturnQueue.get()
-                sqlLock.release()
-
-                for row in queryreturn:
-                    pubkeyPayload, = row
-
-                readPosition = 8 #to bypass the nonce
-                behaviorBitfield = pubkeyPayload[8:12]
-                readPosition += 4 #to bypass the bitfield of behaviors
-                addressVersion, addressVersionLength = decodeVarint(pubkeyPayload[readPosition:readPosition+10])
-                readPosition += addressVersionLength
-                streamNumber, streamNumberLength = decodeVarint(pubkeyPayload[readPosition:readPosition+10])
-                readPosition += streamNumberLength
-                nLength, nLengthLength = decodeVarint(pubkeyPayload[readPosition:readPosition+10])
-                readPosition += nLengthLength
-                n = convertStringToInt(pubkeyPayload[readPosition:readPosition+nLength])
-                readPosition += nLength
-                eLength, eLengthLength = decodeVarint(pubkeyPayload[readPosition:readPosition+10])
-                readPosition += eLengthLength
-                e = convertStringToInt(pubkeyPayload[readPosition:readPosition+eLength])
-                receiversPubkey = rsa.PublicKey(n,e)
-
-                infile = cStringIO.StringIO(payload)
-                outfile = cStringIO.StringIO()
-                #print 'Encrypting using public key:', receiversPubkey
-                encrypt_bigfile(infile,outfile,receiversPubkey)
-
-                encrypted = outfile.getvalue()
-                infile.close()
-                outfile.close()"""
 
             nonce = 0
             trialValue = 99999999999999999999
@@ -3109,40 +2612,6 @@ class addressGenerator(QThread):
                 self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),'Done generating address')
                 reloadMyAddressHashes()
 
-        #This code which deals with old RSA addresses will soon be removed.
-        """elif self.addressVersionNumber == 1:
-            statusbar = 'Generating new ' + str(config.getint('bitmessagesettings', 'bitstrength')) + ' bit RSA key. This takes a minute on average. If you want to generate multiple addresses now, you can; they will queue.'
-            self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),statusbar)
-            (pubkey, privkey) = rsa.newkeys(config.getint('bitmessagesettings', 'bitstrength'))
-            print privkey['n']
-            print privkey['e']
-            print privkey['d']
-            print privkey['p']
-            print privkey['q']
-
-            sha = hashlib.new('sha512')
-            #sha.update(str(pubkey.n)+str(pubkey.e))
-            sha.update(convertIntToString(pubkey.n)+convertIntToString(pubkey.e))
-            ripe = hashlib.new('ripemd160')
-            ripe.update(sha.digest())
-            address = encodeAddress(1,self.streamNumber,ripe.digest())
-
-            self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),'Finished generating address. Writing to keys.dat')
-            config.add_section(address)
-            config.set(address,'label',self.label)
-            config.set(address,'enabled','true')
-            config.set(address,'decoy','false')
-            config.set(address,'n',str(privkey['n']))
-            config.set(address,'e',str(privkey['e']))
-            config.set(address,'d',str(privkey['d']))
-            config.set(address,'p',str(privkey['p']))
-            config.set(address,'q',str(privkey['q']))
-            with open(appdata + 'keys.dat', 'wb') as configfile:
-                config.write(configfile)
-
-            self.emit(SIGNAL("updateStatusBar(PyQt_PyObject)"),'Done generating address')
-            self.emit(SIGNAL("writeNewAddressToTable(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"),self.label,address,str(self.streamNumber))
-            reloadMyAddressHashes()"""
 
     #Does an EC point multiplication; turns a private key into a public key.
     def pointMult(self,secret):
@@ -4347,13 +3816,6 @@ class MyForm(QtGui.QMainWindow):
 
                         
 
-                        """try:
-                            fromLabel = config.get(fromAddress, 'label')
-                        except:
-                            fromLabel = ''
-                        if fromLabel == '':
-                            fromLabel = fromAddress"""
-
                         toLabel = ''
 
                         t = (toAddress,)
@@ -4368,30 +3830,6 @@ class MyForm(QtGui.QMainWindow):
                         
                         self.displayNewSentMessage(toAddress,toLabel,fromAddress, subject, message, ackdata)
                         workerQueue.put(('sendmessage',toAddress))
-
-                        """self.ui.tableWidgetSent.insertRow(0)
-                        if toLabel == '':
-                            newItem =  QtGui.QTableWidgetItem(unicode(toAddress,'utf-8'))
-                        else:
-                            newItem =  QtGui.QTableWidgetItem(unicode(toLabel,'utf-8'))
-                        newItem.setData(Qt.UserRole,str(toAddress))
-                        self.ui.tableWidgetSent.setItem(0,0,newItem)
-
-                        if fromLabel == '':
-                            newItem =  QtGui.QTableWidgetItem(unicode(fromAddress,'utf-8'))
-                        else:
-                            newItem =  QtGui.QTableWidgetItem(unicode(fromLabel,'utf-8'))
-                        newItem.setData(Qt.UserRole,str(fromAddress))
-                        self.ui.tableWidgetSent.setItem(0,1,newItem)
-                        newItem =  QtGui.QTableWidgetItem(unicode(subject,'utf-8)'))
-                        newItem.setData(Qt.UserRole,unicode(message,'utf-8)'))
-                        self.ui.tableWidgetSent.setItem(0,2,newItem)
-                        newItem =  myTableWidgetItem('Just pressed ''send'' '+strftime(config.get('bitmessagesettings', 'timeformat'),localtime(int(time.time()))))
-                        newItem.setData(Qt.UserRole,QByteArray(ackdata))
-                        newItem.setData(33,int(time.time()))
-                        self.ui.tableWidgetSent.setItem(0,3,newItem)
-
-                        self.ui.textEditSentMessage.setText(self.ui.tableWidgetSent.item(0,2).data(Qt.UserRole).toPyObject())"""
 
                         self.ui.comboBoxSendFrom.setCurrentIndex(0)
                         self.ui.labelFrom.setText('')
